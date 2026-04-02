@@ -1,0 +1,245 @@
+@startuml Transaction Service - Hexagonal Architecture
+
+!define DOMAIN_COLOR #E8F5E9
+!define APPLICATION_COLOR #E3F2FD
+!define INFRASTRUCTURE_COLOR #FFF9C4
+
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam rectangle {
+    BackgroundColor<<domain>> DOMAIN_COLOR
+    BorderColor<<domain>> #4CAF50
+    BackgroundColor<<application>> APPLICATION_COLOR
+    BorderColor<<application>> #2196F3
+    BackgroundColor<<infrastructure>> INFRASTRUCTURE_COLOR
+    BorderColor<<infrastructure>> #FFC107
+}
+
+title Гексагональная архитектура: Transaction Service «Где мои деньги»
+
+' Infrastructure Layer
+package "Infrastructure Layer" <<infrastructure>> {
+    ' Входящие адаптеры
+    rectangle "REST API" as REST {
+        component "TransactionController" as Controller
+    }
+    
+    rectangle "CLI" as CLI {
+        component "ConsoleInterface" as Console
+    }
+    
+    ' Исходящие адаптеры
+    rectangle "Persistence" as Persistence {
+        component "PostgresTransactionRepository" as PostgresTxRepo
+        component "PostgresCategoryRepository" as PostgresCatRepo
+        component "PostgresBudgetRepository" as PostgresBudgetRepo
+    }
+    
+    rectangle "Cache" as Cache {
+        component "RedisCacheAdapter" as Redis
+    }
+    
+    rectangle "Events" as Events {
+        component "OutboxEventPublisher" as Outbox
+    }
+    
+    rectangle "Configuration" as Config {
+        component "DependencyInjection" as DI
+    }
+}
+
+' Application Layer
+package "Application Layer" <<application>> {
+    rectangle "Inbound Ports" as InPorts {
+        interface "CreateIncomeUseCase" as CreateIncomeUC
+        interface "CreateExpenseUseCase" as CreateExpenseUC
+    }
+    
+    rectangle "Outbound Ports" as OutPorts {
+        interface "TransactionRepository" as TxRepoPort
+        interface "CategoryRepository" as CatRepoPort
+        interface "BudgetSettingsRepository" as BudgetRepoPort
+    }
+    
+    rectangle "Service" as Service {
+        component "TransactionService" as TxService
+    }
+}
+
+' Domain Layer
+package "Domain Layer" <<domain>> {
+    rectangle "Aggregates" as Aggregates {
+        component "Transaction" as Transaction
+    }
+    
+    rectangle "Entities" as Entities {
+        component "Category" as Category
+    }
+    
+    rectangle "Value Objects" as VOs {
+        component "BudgetSetting" as BudgetSetting
+        component "TransactionStatus" as TxStatus
+        component "TransactionType" as TxType
+        component "CategoryDistribution" as CatDist
+    }
+}
+
+' Связи Infrastructure → Application
+Controller --> CreateIncomeUC : <<uses>>
+Controller --> CreateExpenseUC : <<uses>>
+Console --> CreateIncomeUC : <<uses>>
+Console --> CreateExpenseUC : <<uses>>
+
+PostgresTxRepo ..|> TxRepoPort : <<implements>>
+PostgresCatRepo ..|> CatRepoPort : <<implements>>
+PostgresBudgetRepo ..|> BudgetRepoPort : <<implements>>
+
+DI --> Controller : <<creates>>
+DI --> PostgresTxRepo : <<creates>>
+DI --> PostgresCatRepo : <<creates>>
+DI --> PostgresBudgetRepo : <<creates>>
+DI --> Redis : <<creates>>
+DI --> Outbox : <<creates>>
+DI --> TxService : <<creates>>
+
+' Связи Application
+TxService ..|> CreateIncomeUC : <<implements>>
+TxService ..|> CreateExpenseUC : <<implements>>
+TxService --> TxRepoPort : <<depends on>>
+TxService --> CatRepoPort : <<depends on>>
+TxService --> BudgetRepoPort : <<depends on>>
+
+' Связи Application → Domain
+TxService --> Transaction : <<uses>>
+TxService --> Category : <<uses>>
+TxService --> BudgetSetting : <<uses>>
+
+' Связи Domain
+Transaction *-- TxType : has
+Transaction *-- TxStatus : has
+Transaction *-- CatDist : contains
+Category *-- BudgetSetting : configured by
+
+note right of Transaction
+  <b>Агрегат: Transaction</b>
+  ----
+  • id: String (TXN-YYYY-NNNN)
+  • type: TransactionType
+  • amount: Decimal
+  • userId: String
+  • description: String
+  • categoryDistributions: List
+  • status: TransactionStatus
+  • idempotencyKey: String
+  • createdAt: Instant
+  • updatedAt: Instant
+  ----
+  <b>Business Rules:</b>
+  • INCOME: сумма распределения = amount
+  • EXPENSE: проверка баланса
+  • PENDING → COMPLETED/FAILED
+end note
+
+note right of Category
+  <b>Entity: Category</b>
+  ----
+  • id: String (CAT-01)
+  • name: String
+  • userId: String
+  • balance: Decimal
+  • budgetPercentage: Decimal
+  ----
+  <b>Business Rules:</b>
+  • Название уникально для пользователя
+  • Сумма процентов = 100%
+end note
+
+note right of BudgetSetting
+  <b>Value Object: BudgetSetting</b>
+  ----
+  • categoryId: String
+  • percentage: Decimal (0-100)
+  • userId: String
+  ----
+  <b>Properties:</b>
+  • Immutable
+  • Equality by value
+end note
+
+note left of CreateIncomeUC
+  <b>Входящий порт</b>
+  ----
+  create_income(command):
+    распределяет доход
+    по категориям
+    согласно бюджету
+end note
+
+note left of CreateExpenseUC
+  <b>Входящий порт</b>
+  ----
+  create_expense(command):
+    списывает сумму
+    с баланса категории
+end note
+
+note left of TxRepoPort
+  <b>Исходящий порт</b>
+  ----
+  • save(transaction)
+  • find_by_id(id)
+  • find_by_idempotency_key(key)
+end note
+
+note left of CatRepoPort
+  <b>Исходящий порт</b>
+  ----
+  • find_by_id(id)
+  • find_by_user_id(userId)
+  • update_balance(id, balance)
+end note
+
+note left of BudgetRepoPort
+  <b>Исходящий порт</b>
+  ----
+  • find_by_user_id(userId)
+  • validate_percentage_sum(userId)
+end note
+
+note bottom of Controller
+  <b>REST Adapter (FastAPI)</b>
+  ----
+  POST /api/transactions/income
+  {
+    "userId": "user-001",
+    "amount": 1000.00,
+    "description": "Зарплата",
+    "idempotencyKey": "550e8400-..."
+  }
+  
+  POST /api/transactions/expense
+  {
+    "userId": "user-001",
+    "categoryId": "CAT-01",
+    "amount": 200.00,
+    "description": "Обед"
+  }
+  
+  GET /api/users/{userId}/balance
+end note
+
+legend right
+  |<DOMAIN_COLOR>| <b>Domain Layer</b> |
+  | Чистая бизнес-логика |
+  | Transaction, Category, BudgetSetting |
+  | Не зависит от фреймворков |
+  |<APPLICATION_COLOR>| <b>Application Layer</b> |
+  | Порты (интерфейсы) |
+  | TransactionService (use-case) |
+  |<INFRASTRUCTURE_COLOR>| <b>Infrastructure Layer</b> |
+  | Адаптеры (реализации) |
+  | REST/CLI, PostgreSQL, Redis |
+  | Outbox, Dependency Injection |
+endlegend
+
+@enduml
