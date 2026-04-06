@@ -525,7 +525,7 @@ class BudgetDistributionService:
 
 ## Ссылка на репозиторий
 
-👉 **GitHub:** `https://github.com/Katapo13/PIS-2026/tree/main/students/Mitskevich_Kate/lab-03`
+👉 **GitHub:** `https://github.com/Katapo13/PIS-2026/tree/lab03-po13-mitskevich/students/Mitskevich_Kate/lab-03`
 
 **Структура папки:**
 ```
