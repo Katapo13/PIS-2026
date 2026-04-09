@@ -1,0 +1,213 @@
+syntax = "proto3";
+
+package finance;
+
+// ========================================
+// ENUMS
+// ========================================
+
+// Тип транзакции
+enum TransactionType {
+  TRANSACTION_TYPE_UNSPECIFIED = 0;
+  TRANSACTION_TYPE_INCOME = 1;
+  TRANSACTION_TYPE_EXPENSE = 2;
+}
+
+// Статус транзакции
+enum TransactionStatus {
+  TRANSACTION_STATUS_UNSPECIFIED = 0;
+  TRANSACTION_STATUS_PENDING = 1;
+  TRANSACTION_STATUS_COMPLETED = 2;
+  TRANSACTION_STATUS_FAILED = 3;
+}
+
+// ========================================
+// MESSAGES (Data Models)
+// ========================================
+
+// Категория бюджета
+message Category {
+  string id = 1;                      // CAT-01
+  string name = 2;                    // "Покушать"
+  string user_id = 3;                 // ID пользователя
+  double balance = 4;                 // Текущий баланс
+  optional double budget_percentage = 5; // Процент от дохода (0-100)
+  int64 created_at = 6;               // Unix timestamp
+  int64 updated_at = 7;               // Unix timestamp
+  int32 version = 8;                  // Для оптимистичной блокировки
+}
+
+// Распределение суммы по категориям
+message CategoryDistribution {
+  string category_id = 1;
+  string category_name = 2;
+  double amount = 3;
+}
+
+// Транзакция (доход/расход)
+message Transaction {
+  string id = 1;                      // TXN-2026-0042
+  TransactionType type = 2;           // INCOME / EXPENSE
+  double amount = 3;                  // Сумма
+  string user_id = 4;                 // ID пользователя
+  TransactionStatus status = 5;       // PENDING / COMPLETED / FAILED
+  string idempotency_key = 6;         // Ключ идемпотентности
+  optional string description = 7;    // Комментарий
+  repeated CategoryDistribution distributions = 8; // Распределение по категориям
+  int64 created_at = 9;               // Unix timestamp
+  int64 updated_at = 10;              // Unix timestamp
+}
+
+// Настройка бюджета (процентное распределение)
+message BudgetSetting {
+  string category_id = 1;
+  string category_name = 2;
+  double percentage = 3;              // 0-100
+  string user_id = 4;
+}
+
+// ========================================
+// REQUEST / RESPONSE MESSAGES
+// ========================================
+
+// ----- Create Income -----
+message CreateIncomeRequest {
+  string user_id = 1;
+  double amount = 2;
+  string idempotency_key = 3;
+  optional string description = 4;
+  optional string source = 5;         // "Зарплата", "Фриланс"
+}
+
+message CreateIncomeResponse {
+  string transaction_id = 1;
+  TransactionStatus status = 2;
+  repeated CategoryDistribution distributions = 3;
+  string error_message = 4;           // В случае ошибки
+}
+
+// ----- Create Expense -----
+message CreateExpenseRequest {
+  string user_id = 1;
+  string category_id = 2;
+  double amount = 3;
+  string idempotency_key = 4;
+  optional string description = 5;
+  bool allow_negative = 6;            // Разрешить уход в минус
+}
+
+message CreateExpenseResponse {
+  string transaction_id = 1;
+  TransactionStatus status = 2;
+  double new_balance = 3;             // Новый баланс категории
+  string error_message = 4;
+}
+
+// ----- Get Transaction -----
+message GetTransactionRequest {
+  string transaction_id = 1;
+}
+
+message GetTransactionResponse {
+  Transaction transaction = 1;
+  bool found = 2;
+}
+
+// ----- Get User Balance -----
+message GetUserBalanceRequest {
+  string user_id = 1;
+}
+
+message GetUserBalanceResponse {
+  string user_id = 1;
+  double total_balance = 2;           // Общий баланс
+  repeated CategoryBalance category_balances = 3;
+}
+
+message CategoryBalance {
+  string category_id = 1;
+  string category_name = 2;
+  double balance = 3;
+}
+
+// ----- Get Budget Settings -----
+message GetBudgetSettingsRequest {
+  string user_id = 1;
+}
+
+message GetBudgetSettingsResponse {
+  repeated BudgetSetting settings = 1;
+}
+
+// ----- Update Budget Settings -----
+message UpdateBudgetSettingsRequest {
+  string user_id = 1;
+  repeated BudgetSetting settings = 2;
+}
+
+message UpdateBudgetSettingsResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+// ----- Validate Budget Settings -----
+message ValidateBudgetSettingsRequest {
+  repeated BudgetSetting settings = 1;
+}
+
+message ValidateBudgetSettingsResponse {
+  bool valid = 1;
+  double total_percentage = 2;        // Сумма процентов
+  string error_message = 3;
+}
+
+// ----- Stream Transactions -----
+message StreamTransactionsRequest {
+  string user_id = 1;
+  optional TransactionType type_filter = 2;  // Фильтр по типу
+  optional TransactionStatus status_filter = 3; // Фильтр по статусу
+}
+
+// ----- Get Categories -----
+message GetCategoriesRequest {
+  string user_id = 1;
+}
+
+message GetCategoriesResponse {
+  repeated Category categories = 1;
+}
+
+// ----- Health Check -----
+message HealthCheckRequest {
+  string service = 1;
+}
+
+message HealthCheckResponse {
+  enum ServingStatus {
+    UNKNOWN = 0;
+    SERVING = 1;
+    NOT_SERVING = 2;
+  }
+  ServingStatus status = 1;
+}
+
+// ========================================
+// SERVICE DEFINITION
+// ========================================
+
+service TransactionService {
+  // Унарные RPC
+  rpc CreateIncome(CreateIncomeRequest) returns (CreateIncomeResponse);
+  rpc CreateExpense(CreateExpenseRequest) returns (CreateExpenseResponse);
+  rpc GetTransaction(GetTransactionRequest) returns (GetTransactionResponse);
+  rpc GetUserBalance(GetUserBalanceRequest) returns (GetUserBalanceResponse);
+  rpc GetBudgetSettings(GetBudgetSettingsRequest) returns (GetBudgetSettingsResponse);
+  rpc UpdateBudgetSettings(UpdateBudgetSettingsRequest) returns (UpdateBudgetSettingsResponse);
+  rpc ValidateBudgetSettings(ValidateBudgetSettingsRequest) returns (ValidateBudgetSettingsResponse);
+  rpc GetCategories(GetCategoriesRequest) returns (GetCategoriesResponse);
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+  
+  // Server-side Streaming: Стрим транзакций пользователя
+  rpc StreamTransactions(StreamTransactionsRequest) returns (stream Transaction);
+
+}
